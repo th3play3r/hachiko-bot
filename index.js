@@ -1,7 +1,9 @@
 require("dotenv").config();
 
 const fs = require("fs");
+const path = require("path");
 const http = require("http");
+
 const {
   Client,
   GatewayIntentBits,
@@ -11,8 +13,12 @@ const {
 const {
   joinVoiceChannel,
   getVoiceConnection,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
   VoiceConnectionStatus,
   entersState,
+  NoSubscriberBehavior,
 } = require("@discordjs/voice");
 
 // =========================
@@ -34,10 +40,10 @@ http
   });
 
 // =========================
-// Файл с сохранением данных
+// Сохранение пользователей
 // =========================
 
-const DATA_FILE = "./users.json";
+const DATA_FILE = path.join(__dirname, "users.json");
 
 function loadUsers() {
   try {
@@ -46,8 +52,7 @@ function loadUsers() {
       return new Map();
     }
 
-    const file = fs.readFileSync(DATA_FILE, "utf8");
-    const data = JSON.parse(file);
+    const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
 
     return new Map(Object.entries(data));
   } catch (error) {
@@ -87,7 +92,7 @@ const client = new Client({
 });
 
 // =========================
-// Вспомогательные функции
+// Статистика
 // =========================
 
 function getUser(userId) {
@@ -102,7 +107,6 @@ function getUser(userId) {
 
   const user = users.get(userId);
 
-  // Защита от старых или повреждённых данных
   user.xp = Number(user.xp) || 0;
   user.voiceSeconds = Number(user.voiceSeconds) || 0;
   user.joinedAt = user.joinedAt || null;
@@ -116,7 +120,7 @@ function getLevel(xp) {
 }
 
 function getRequiredXp(level) {
-  return Math.pow(level, 2) * 100;
+  return level * level * 100;
 }
 
 function formatTime(seconds) {
@@ -128,14 +132,8 @@ function formatTime(seconds) {
 
   const result = [];
 
-  if (hours > 0) {
-    result.push(`${hours} ч.`);
-  }
-
-  if (minutes > 0) {
-    result.push(`${minutes} мин.`);
-  }
-
+  if (hours > 0) result.push(`${hours} ч.`);
+  if (minutes > 0) result.push(`${minutes} мин.`);
   if (secs > 0 || result.length === 0) {
     result.push(`${secs} сек.`);
   }
@@ -147,7 +145,9 @@ function getVoiceTime(userData) {
   let total = Number(userData.voiceSeconds) || 0;
 
   if (userData.joinedAt) {
-    total += Math.floor((Date.now() - userData.joinedAt) / 1000);
+    total += Math.floor(
+      (Date.now() - userData.joinedAt) / 1000
+    );
   }
 
   return total;
@@ -155,7 +155,6 @@ function getVoiceTime(userData) {
 
 function addXp(member, amount) {
   const user = getUser(member.id);
-
   const oldLevel = getLevel(user.xp);
 
   user.xp += amount;
@@ -164,25 +163,99 @@ function addXp(member, amount) {
 
   saveUsers();
 
-  if (newLevel > oldLevel) {
-    const channel = member.guild.systemChannel;
-
-    if (channel) {
-      channel
-        .send(
-          `🎉 ${member} достиг ${newLevel} уровня!`
-        )
-        .catch(() => {});
-    }
+  if (newLevel > oldLevel && member.guild.systemChannel) {
+    member.guild.systemChannel
+      .send(`🎉 ${member} достиг ${newLevel} уровня!`)
+      .catch(() => {});
   }
 }
 
-function isInVoice(member) {
-  return Boolean(member.voice && member.voice.channel);
+// =========================
+// 5 случайных лаев
+// =========================
+
+async function barkInVoice(message) {
+  const voiceChannel = message.member.voice.channel;
+
+  if (!voiceChannel) {
+    return message.reply(
+      "❌ Сначала зайди в голосовой канал."
+    );
+  }
+
+  let connection = getVoiceConnection(message.guild.id);
+
+  if (!connection) {
+    connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: message.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+      selfDeaf: false,
+      selfMute: false,
+    });
+
+    try {
+      await entersState(
+        connection,
+        VoiceConnectionStatus.Ready,
+        30_000
+      );
+    } catch (error) {
+      console.error("❌ Ошибка подключения к войсу:", error);
+
+      connection.destroy();
+
+      return message.reply(
+        "❌ Не получилось подключиться к голосовому каналу."
+      );
+    }
+  }
+
+  const barkFiles = [
+    "bark1.mp3",
+    "bark2.mp3",
+    "bark3.mp3",
+    "bark4.mp3",
+    "bark5.mp3",
+  ];
+
+  const randomBark =
+    barkFiles[Math.floor(Math.random() * barkFiles.length)];
+
+  const barkPath = path.join(__dirname, randomBark);
+
+  if (!fs.existsSync(barkPath)) {
+    return message.reply(
+      `❌ Не найден файл \`${randomBark}\`.`
+    );
+  }
+
+  const player = createAudioPlayer({
+    behaviors: {
+      noSubscriber: NoSubscriberBehavior.Play,
+    },
+  });
+
+  const resource = createAudioResource(barkPath);
+
+  connection.subscribe(player);
+  player.play(resource);
+
+  await message.reply(
+    `🐕 Затико гавкнул: \`${randomBark}\``
+  );
+
+  player.on(AudioPlayerStatus.Idle, () => {
+    player.stop();
+  });
+
+  player.on("error", (error) => {
+    console.error("❌ Ошибка воспроизведения:", error);
+  });
 }
 
 // =========================
-// Запуск бота
+// Запуск
 // =========================
 
 client.once("clientReady", () => {
@@ -194,7 +267,7 @@ client.once("clientReady", () => {
 });
 
 // =========================
-// Сообщения и команды
+// Команды
 // =========================
 
 client.on("messageCreate", async (message) => {
@@ -206,10 +279,9 @@ client.on("messageCreate", async (message) => {
     const user = getUser(member.id);
     const now = Date.now();
 
-    // XP за сообщение, максимум один раз в минуту
+    // XP за сообщение раз в минуту
     if (now - user.lastMessageXp >= 60_000) {
       user.lastMessageXp = now;
-
       addXp(member, 10);
     }
   }
@@ -217,35 +289,34 @@ client.on("messageCreate", async (message) => {
   const args = message.content.trim().split(/\s+/);
   const command = args.shift().toLowerCase();
 
-  // =========================
   // !ping
-  // =========================
-
   if (command === "!ping") {
-    return message.reply(`🏓 Pong! Задержка: ${client.ws.ping} мс`);
+    return message.reply(
+      `🏓 Pong! Задержка: ${client.ws.ping} мс`
+    );
   }
 
-  // =========================
   // !woof
-  // =========================
-
   if (command === "!woof") {
     return message.reply("🐕 Гав-гав!");
   }
 
-  // =========================
-  // !help
-  // =========================
+  // !gaf или !гав
+  if (command === "!gaf" || command === "!гав") {
+    return barkInVoice(message);
+  }
 
+  // !help
   if (command === "!help") {
     return message.reply(
       [
         "**🐕 Команды Hachiko:**",
         "",
         "`!ping` — проверить задержку",
-        "`!woof` — гавкнуть",
+        "`!woof` — гавкнуть в чате",
+        "`!gaf` — случайный лай в войсе",
         "`!rank` — твой уровень и XP",
-        "`!voicetime` — время в голосовых каналах",
+        "`!voicetime` — время в войсе",
         "`!topvoice` — топ по времени в войсе",
         "`!uptime` — время работы бота",
         "`!server` — информация о сервере",
@@ -256,13 +327,9 @@ client.on("messageCreate", async (message) => {
     );
   }
 
-  // =========================
   // !rank
-  // =========================
-
   if (command === "!rank") {
     const user = getUser(message.author.id);
-
     const level = getLevel(user.xp);
     const nextLevelXp = getRequiredXp(level);
     const voiceTime = getVoiceTime(user);
@@ -277,10 +344,7 @@ client.on("messageCreate", async (message) => {
     );
   }
 
-  // =========================
   // !voicetime
-  // =========================
-
   if (command === "!voicetime") {
     const target =
       message.mentions.members.first() || message.member;
@@ -295,10 +359,7 @@ client.on("messageCreate", async (message) => {
     );
   }
 
-  // =========================
   // !topvoice
-  // =========================
-
   if (command === "!topvoice") {
     const sorted = [...users.entries()]
       .map(([userId, data]) => ({
@@ -309,7 +370,9 @@ client.on("messageCreate", async (message) => {
       .slice(0, 10);
 
     if (sorted.length === 0) {
-      return message.reply("Пока никто не накопил время в войсе.");
+      return message.reply(
+        "Пока никто не накопил время в войсе."
+      );
     }
 
     const lines = [];
@@ -320,14 +383,19 @@ client.on("messageCreate", async (message) => {
       let name = `Пользователь ${item.userId}`;
 
       try {
-        const member = await message.guild.members.fetch(item.userId);
+        const member = await message.guild.members.fetch(
+          item.userId
+        );
+
         name = member.user.username;
       } catch {
-        // Пользователь мог выйти с сервера
+        // Пользователь мог покинуть сервер
       }
 
       lines.push(
-        `**${i + 1}.** ${name} — ${formatTime(item.seconds)}`
+        `**${i + 1}.** ${name} — ${formatTime(
+          item.seconds
+        )}`
       );
     }
 
@@ -336,22 +404,16 @@ client.on("messageCreate", async (message) => {
     );
   }
 
-  // =========================
   // !uptime
-  // =========================
-
   if (command === "!uptime") {
-    const seconds = Math.floor(process.uptime());
-
     return message.reply(
-      `⏱️ Бот работает: **${formatTime(seconds)}**`
+      `⏱️ Бот работает: **${formatTime(
+        Math.floor(process.uptime())
+      )}**`
     );
   }
 
-  // =========================
   // !server
-  // =========================
-
   if (command === "!server") {
     return message.reply(
       [
@@ -362,15 +424,14 @@ client.on("messageCreate", async (message) => {
     );
   }
 
-  // =========================
   // !where
-  // =========================
-
   if (command === "!where") {
     const voiceChannel = message.member.voice.channel;
 
     if (!voiceChannel) {
-      return message.reply("❌ Ты сейчас не находишься в войсе.");
+      return message.reply(
+        "❌ Ты сейчас не находишься в войсе."
+      );
     }
 
     return message.reply(
@@ -378,10 +439,7 @@ client.on("messageCreate", async (message) => {
     );
   }
 
-  // =========================
   // !stay
-  // =========================
-
   if (command === "!stay") {
     const voiceChannel = message.member.voice.channel;
 
@@ -391,7 +449,9 @@ client.on("messageCreate", async (message) => {
       );
     }
 
-    const oldConnection = getVoiceConnection(message.guild.id);
+    const oldConnection = getVoiceConnection(
+      message.guild.id
+    );
 
     if (oldConnection) {
       oldConnection.destroy();
@@ -399,7 +459,7 @@ client.on("messageCreate", async (message) => {
 
     const connection = joinVoiceChannel({
       channelId: voiceChannel.id,
-      guildId: voiceChannel.guild.id,
+      guildId: message.guild.id,
       adapterCreator: voiceChannel.guild.voiceAdapterCreator,
       selfDeaf: false,
       selfMute: false,
@@ -416,7 +476,7 @@ client.on("messageCreate", async (message) => {
         `🐕 Я зашёл в канал **${voiceChannel.name}**`
       );
     } catch (error) {
-      console.error("Ошибка подключения к войсу:", error);
+      console.error("❌ Ошибка подключения:", error);
 
       connection.destroy();
 
@@ -426,25 +486,28 @@ client.on("messageCreate", async (message) => {
     }
   }
 
-  // =========================
   // !leave
-  // =========================
-
   if (command === "!leave") {
-    const connection = getVoiceConnection(message.guild.id);
+    const connection = getVoiceConnection(
+      message.guild.id
+    );
 
     if (!connection) {
-      return message.reply("❌ Я сейчас не нахожусь в войсе.");
+      return message.reply(
+        "❌ Я сейчас не нахожусь в войсе."
+      );
     }
 
     connection.destroy();
 
-    return message.reply("👋 Я вышел из голосового канала.");
+    return message.reply(
+      "👋 Я вышел из голосового канала."
+    );
   }
 });
 
 // =========================
-// Отслеживание входа/выхода из войса
+// Отслеживание времени в войсе
 // =========================
 
 client.on("voiceStateUpdate", async (oldState, newState) => {
@@ -457,7 +520,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   const wasInVoice = Boolean(oldState.channelId);
   const isNowInVoice = Boolean(newState.channelId);
 
-  // Пользователь зашёл в войс
+  // Вход в войс
   if (!wasInVoice && isNowInVoice) {
     user.joinedAt = Date.now();
 
@@ -470,7 +533,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     return;
   }
 
-  // Пользователь вышел из войса
+  // Выход из войса
   if (wasInVoice && !isNowInVoice) {
     if (user.joinedAt) {
       const seconds = Math.floor(
@@ -479,7 +542,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
 
       user.voiceSeconds += seconds;
       user.xp += Math.floor(seconds / 60);
-
       user.joinedAt = null;
 
       saveUsers();
@@ -494,7 +556,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     return;
   }
 
-  // Пользователь перешёл из одного войса в другой
+  // Переход между голосовыми каналами
   if (
     wasInVoice &&
     isNowInVoice &&
@@ -526,7 +588,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
 setInterval(() => {
   let changed = false;
 
-  for (const [userId, data] of users.entries()) {
+  for (const [, data] of users.entries()) {
     if (!data.joinedAt) continue;
 
     const seconds = Math.floor(
@@ -544,26 +606,22 @@ setInterval(() => {
 
   if (changed) {
     saveUsers();
-
     console.log("💾 Время в войсе сохранено.");
   }
 }, 60_000);
 
-// =========================
-// Автосохранение каждые 5 минут
-// =========================
-
+// Автосохранение
 setInterval(() => {
   saveUsers();
-  console.log("💾 Данные пользователей сохранены.");
+  console.log("💾 Данные сохранены.");
 }, 5 * 60_000);
 
 // =========================
-// Вход в Discord
+// Авторизация
 // =========================
 
 if (!process.env.TOKEN) {
-  console.error("❌ В .env или Render не найден TOKEN");
+  console.error("❌ TOKEN не найден.");
   process.exit(1);
 }
 
