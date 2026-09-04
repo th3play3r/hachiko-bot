@@ -1192,7 +1192,7 @@ client.on("debug", (info) => {
   console.log("🔧 Discord Debug:", info);
 });
 
-console.log("🔑 TOKEN найден:", !!process.env.TOKEN);
+
 
 client
   .login(process.env.TOKEN)
