@@ -292,7 +292,7 @@ function updateVoiceXp() {
     changed = true;
 
     console.log(
-      `🎧 ${userId}: +${newMinutes} XP за войс`
+      `🎧 ${member.user.username} : +${newMinutes} XP за войс`
     );
 
     console.log(
