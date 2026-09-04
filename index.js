@@ -258,9 +258,32 @@ async function barkInVoice(message) {
 // Запуск
 // =========================
 
+function restoreVoiceSessions() {
+  for (const guild of client.guilds.cache.values()) {
+    for (const channel of guild.channels.cache.values()) {
+      if (!channel.isVoiceBased()) continue;
+
+      for (const member of channel.members.values()) {
+        if (member.user.bot) continue;
+
+        const data = getUser(member.id);
+
+        // Не перезаписываем уже начатую сессию
+        if (!data.joinedAt) {
+          data.joinedAt = Date.now();
+          saveUsers();
+          console.log(`Восстановлена голосовая сессия: ${member.user.tag}`);
+        }
+      }
+    }
+  }
+}
+
 client.once("clientReady", () => {
   console.log(`🐕 Hachiko запущен: ${client.user.tag}`);
 
+    restoreVoiceSessions();
+  
   client.user.setActivity("за голосовыми каналами", {
     type: ActivityType.Watching,
   });
@@ -510,72 +533,42 @@ client.on("messageCreate", async (message) => {
 // Отслеживание времени в войсе
 // =========================
 
-client.on("voiceStateUpdate", (oldState, newState) => {
+client.on('voiceStateUpdate', (oldState, newState) => {
   const member = newState.member || oldState.member;
 
   if (!member || member.user.bot) return;
 
-  const user = getUser(member.id);
+  const data = getUser(member.id);
 
-  const wasInVoice = Boolean(oldState.channelId);
-  const isNowInVoice = Boolean(newState.channelId);
-
-  // Вход в войс
-  if (!wasInVoice && isNowInVoice) {
-    user.joinedAt = Date.now();
-
+  // Пользователь зашёл в войс
+  if (!oldState.channelId && newState.channelId) {
+    data.joinedAt = Date.now();
     saveUsers();
 
-    console.log(
-      `🎧 ${member.user.username} зашёл в войс`
-    );
-
-    return;
+    console.log(`${member.user.tag} вошёл в войс`);
   }
 
-  // Выход из войса
-  if (wasInVoice && !isNowInVoice) {
-    if (user.joinedAt) {
-      const seconds = Math.floor(
-        (Date.now() - Number(user.joinedAt)) / 1000
-      );
-
-      user.voiceSeconds += Math.max(0, seconds);
-      user.xp += Math.floor(Math.max(0, seconds) / 60);
-      user.joinedAt = null;
-
-      saveUsers();
-
-      console.log(
-        `👋 ${member.user.username} вышел из войса. Добавлено ${seconds} секунд`
+  // Пользователь вышел из войса
+  if (oldState.channelId && !newState.channelId) {
+    if (data.joinedAt) {
+      data.voiceSeconds += Math.floor(
+        (Date.now() - data.joinedAt) / 1000
       );
     }
 
-    return;
+    data.joinedAt = null;
+    saveUsers();
+
+    console.log(`${member.user.tag} вышел из войса`);
   }
 
-  // Переход между каналами
+  // Пользователь перешёл из одного канала в другой
   if (
-    wasInVoice &&
-    isNowInVoice &&
+    oldState.channelId &&
+    newState.channelId &&
     oldState.channelId !== newState.channelId
   ) {
-    if (user.joinedAt) {
-      const seconds = Math.floor(
-        (Date.now() - Number(user.joinedAt)) / 1000
-      );
-
-      user.voiceSeconds += Math.max(0, seconds);
-      user.xp += Math.floor(Math.max(0, seconds) / 60);
-    }
-
-    user.joinedAt = Date.now();
-
-    saveUsers();
-
-    console.log(
-      `🔄 ${member.user.username} перешёл в другой войс`
-    );
+    console.log(`${member.user.tag} перешёл в другой голосовой канал`);
   }
 });
 
