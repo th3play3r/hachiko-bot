@@ -251,7 +251,6 @@ function updateVoiceXp() {
   let changed = false;
 
   for (const [userId, user] of users) {
-    // Пользователь сейчас не в войсе
     if (!user.joinedAt) {
       continue;
     }
@@ -260,22 +259,17 @@ function updateVoiceXp() {
       (now - Number(user.joinedAt)) / 1000
     );
 
-    // Ещё не прошла целая минута
     if (elapsedSeconds < 60) {
       continue;
     }
 
-    // Сколько полных минут человек находится
-    // в текущей голосовой сессии
     const minutesPassed = Math.floor(
       elapsedSeconds / 60
     );
 
-    // Сколько минут уже было оплачено XP
     const minutesRewarded =
       Number(user.lastVoiceXp) || 0;
 
-    // Сколько новых минут нужно оплатить
     const newMinutes =
       minutesPassed - minutesRewarded;
 
@@ -283,23 +277,16 @@ function updateVoiceXp() {
       continue;
     }
 
-    // +1 XP за каждую новую минуту
+    const oldXp = user.xp;
+
+    // +1 XP за каждую минуту
     user.xp += newMinutes;
 
-    // Запоминаем, сколько минут уже выдали
     user.lastVoiceXp = minutesPassed;
 
     changed = true;
 
-    console.log(
-      `🎧 ${member.user.username} : +${newMinutes} XP за войс`
-    );
-
-    console.log(
-      `⭐ Всего XP: ${user.xp}`
-    );
-
-    // Проверяем уровень
+    // Ищем пользователя на сервере
     for (const guild of client.guilds.cache.values()) {
       const member =
         guild.members.cache.get(userId);
@@ -308,10 +295,15 @@ function updateVoiceXp() {
         continue;
       }
 
-      const oldLevel = getLevel(
-        user.xp - newMinutes
+      console.log(
+        `🎧 ${member.user.username}: +${newMinutes} XP за войс`
       );
 
+      console.log(
+        `⭐ Всего XP: ${user.xp}`
+      );
+
+      const oldLevel = getLevel(oldXp);
       const newLevel = getLevel(user.xp);
 
       if (
