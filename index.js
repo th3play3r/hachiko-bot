@@ -1180,4 +1180,25 @@ if (!process.env.TOKEN) {
   process.exit(1);
 }
 
-client.login(process.env.TOKEN);
+client.on("error", (error) => {
+  console.error("❌ Discord Client Error:", error);
+});
+
+client.on("warn", (warning) => {
+  console.warn("⚠️ Discord Warning:", warning);
+});
+
+client.on("debug", (info) => {
+  console.log("🔧 Discord Debug:", info);
+});
+
+console.log("🔑 TOKEN найден:", !!process.env.TOKEN);
+
+client
+  .login(process.env.TOKEN)
+  .then(() => {
+    console.log("🔌 Запрос на подключение к Discord отправлен.");
+  })
+  .catch((error) => {
+    console.error("❌ ОШИБКА LOGIN:", error);
+  });
