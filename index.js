@@ -12,13 +12,9 @@ const {
 
 const {
   joinVoiceChannel,
-  getVoiceConnection,
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  VoiceConnectionStatus,
-  entersState,
-  NoSubscriberBehavior,
 } = require("@discordjs/voice");
 
 // =========================
@@ -27,20 +23,20 @@ const {
 
 const PORT = process.env.PORT || 10000;
 
-http
-  .createServer((req, res) => {
-    res.writeHead(200, {
-      "Content-Type": "text/plain; charset=utf-8",
-    });
-
-    res.end("Hachiko is alive");
-  })
-  .listen(PORT, "0.0.0.0", () => {
-    console.log(`🌐 HTTP-сервер запущен на порту ${PORT}`);
+const server = http.createServer((req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
   });
 
+  res.end("Hachiko is alive 🐕");
+});
+
+server.listen(PORT, () => {
+  console.log(`🌐 HTTP-сервер запущен на порту ${PORT}`);
+});
+
 // =========================
-// Сохранение пользователей
+// GitHub настройки
 // =========================
 
 const DATA_FILE = path.join(__dirname, "users.json");
@@ -54,43 +50,50 @@ let githubSaveTimer = null;
 let githubSaveInProgress = false;
 let githubSaveAgain = false;
 
+// =========================
+// Загрузка пользователей
+// =========================
+
 function loadUsers() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
       fs.writeFileSync(DATA_FILE, "{}", "utf8");
+
+      console.log("📁 users.json не найден. Создан новый.");
+
       return new Map();
     }
 
     const file = fs.readFileSync(DATA_FILE, "utf8").trim();
 
-    // Пустой файл считаем пустой базой
     if (!file) {
       console.log("⚠️ users.json пустой. Создаём новую базу.");
+
       fs.writeFileSync(DATA_FILE, "{}", "utf8");
+
       return new Map();
     }
 
     const data = JSON.parse(file);
 
+    console.log(
+      `📂 Загружено пользователей: ${Object.keys(data).length}`
+    );
+
     return new Map(Object.entries(data));
   } catch (error) {
     console.error(
       "❌ Ошибка загрузки users.json:",
-      error
+      error.message
     );
-
-    // Если JSON повреждён, не даём боту упасть
-    try {
-      fs.writeFileSync(
-        DATA_FILE,
-        "{}",
-        "utf8"
-      );
-    } catch {}
 
     return new Map();
   }
 }
+
+// =========================
+// Локальное сохранение
+// =========================
 
 function saveUsers() {
   try {
@@ -104,17 +107,18 @@ function saveUsers() {
 
     console.log("💾 users.json сохранён локально.");
 
-    // Не делаем GitHub commit каждую секунду.
-    // Ждём 5 секунд после последнего изменения.
     scheduleGitHubSave();
-
   } catch (error) {
     console.error(
       "❌ Ошибка локального сохранения users.json:",
-      error
+      error.message
     );
   }
 }
+
+// =========================
+// Планирование GitHub-сохранения
+// =========================
 
 function scheduleGitHubSave() {
   if (
@@ -122,10 +126,6 @@ function scheduleGitHubSave() {
     !GITHUB_OWNER ||
     !GITHUB_REPO
   ) {
-    console.log(
-      "⚠️ GitHub сохранение отключено: нет GITHUB_TOKEN / GITHUB_OWNER / GITHUB_REPO"
-    );
-
     return;
   }
 
@@ -137,6 +137,10 @@ function scheduleGitHubSave() {
     saveUsersToGitHub();
   }, 5000);
 }
+
+// =========================
+// Сохранение users.json в GitHub
+// =========================
 
 async function saveUsersToGitHub() {
   if (githubSaveInProgress) {
@@ -163,15 +167,14 @@ async function saveUsersToGitHub() {
       `${GITHUB_REPO}/contents/` +
       `${filePath}`;
 
-    // Сначала узнаём SHA текущего файла
+    // Получаем SHA существующего файла
     const getResponse = await fetch(
       `${apiUrl}?ref=${encodeURIComponent(GITHUB_BRANCH)}`,
       {
         method: "GET",
 
         headers: {
-          Authorization:
-            `Bearer ${GITHUB_TOKEN}`,
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
 
           Accept:
             "application/vnd.github+json",
@@ -201,7 +204,7 @@ async function saveUsersToGitHub() {
       );
     }
 
-    // Загружаем новый users.json
+    // Отправляем файл в GitHub
     const putResponse = await fetch(
       apiUrl,
       {
@@ -225,14 +228,11 @@ async function saveUsersToGitHub() {
         },
 
         body: JSON.stringify({
-          message:
-            "Update users.json",
+          message: "Update users.json",
 
-          content:
-            encodedContent,
+          content: encodedContent,
 
-          branch:
-            GITHUB_BRANCH,
+          branch: GITHUB_BRANCH,
 
           ...(sha ? { sha } : {}),
         }),
@@ -251,13 +251,11 @@ async function saveUsersToGitHub() {
     console.log(
       "☁️ users.json успешно сохранён в GitHub!"
     );
-
   } catch (error) {
     console.error(
-      "❌ Ошибка сохранения users.json в GitHub:",
+      "❌ Ошибка сохранения в GitHub:",
       error.message
     );
-
   } finally {
     githubSaveInProgress = false;
 
@@ -268,63 +266,36 @@ async function saveUsersToGitHub() {
   }
 }
 
+// =========================
+// Пользователи
+// =========================
+
 const users = loadUsers();
 
 // =========================
-// Discord-клиент
-// =========================
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildMembers,
-  ],
-});
-
-// =========================
-// Пользователь
+// Получение пользователя
 // =========================
 
 function getUser(userId) {
   if (!users.has(userId)) {
     users.set(userId, {
       xp: 0,
-
-      // Общее время в войсе
       voiceSeconds: 0,
-
-      // Время начала текущей голосовой сессии
       joinedAt: null,
-
-      // Последний раз, когда выдавался XP за сообщение
       lastMessageXp: 0,
-
-      // Сколько минут уже оплачено XP
-      // в текущей голосовой сессии
       lastVoiceXp: 0,
     });
+
+    saveUsers();
   }
 
   const user = users.get(userId);
 
-  // Защита от старых users.json
+  // Защита от старых/сломанных данных
   user.xp = Number(user.xp) || 0;
-
-  user.voiceSeconds =
-    Number(user.voiceSeconds) || 0;
-
-  user.joinedAt = user.joinedAt
-    ? Number(user.joinedAt)
-    : null;
-
-  user.lastMessageXp =
-    Number(user.lastMessageXp) || 0;
-
-  user.lastVoiceXp =
-    Number(user.lastVoiceXp) || 0;
+  user.voiceSeconds = Number(user.voiceSeconds) || 0;
+  user.lastMessageXp = Number(user.lastMessageXp) || 0;
+  user.lastVoiceXp = Number(user.lastVoiceXp) || 0;
 
   return user;
 }
@@ -342,7 +313,7 @@ function getRequiredXp(level) {
 }
 
 // =========================
-// Форматирование времени
+// Формат времени
 // =========================
 
 function formatTime(seconds) {
@@ -356,42 +327,23 @@ function formatTime(seconds) {
 
   const secs = seconds % 60;
 
-  const result = [];
-
-  if (hours > 0) {
-    result.push(`${hours} ч.`);
-  }
-
-  if (minutes > 0) {
-    result.push(`${minutes} мин.`);
-  }
-
-  if (secs > 0 || result.length === 0) {
-    result.push(`${secs} сек.`);
-  }
-
-  return result.join(" ");
+  return `${hours}ч ${minutes}м ${secs}с`;
 }
 
 // =========================
-// Время пользователя в войсе
+// Получение времени в войсе
 // =========================
 
-function getVoiceTime(userData) {
-  let total =
-    Number(userData.voiceSeconds) || 0;
+function getVoiceTime(user) {
+  let seconds = Number(user.voiceSeconds) || 0;
 
-  // Если человек сейчас в войсе,
-  // добавляем текущую незавершённую сессию
-  if (userData.joinedAt) {
-    total += Math.floor(
-      (Date.now() -
-        Number(userData.joinedAt)) /
-        1000
+  if (user.joinedAt) {
+    seconds += Math.floor(
+      (Date.now() - Number(user.joinedAt)) / 1000
     );
   }
 
-  return total;
+  return seconds;
 }
 
 // =========================
@@ -401,39 +353,36 @@ function getVoiceTime(userData) {
 function addXp(member, amount) {
   const user = getUser(member.id);
 
-  const oldLevel = getLevel(user.xp);
+  const oldXp = user.xp;
+  const oldLevel = getLevel(oldXp);
 
-  user.xp += Number(amount) || 0;
+  user.xp += amount;
 
   const newLevel = getLevel(user.xp);
 
   saveUsers();
 
   console.log(
-    `✨ ${member.user.username} получил ${amount} XP. Всего: ${user.xp}`
+    `⭐ ${member.user.username}: +${amount} XP | Всего: ${user.xp}`
   );
 
-  // Повышение уровня
-  if (
-    newLevel > oldLevel &&
-    member.guild.systemChannel
-  ) {
-    member.guild.systemChannel
-      .send(
-        `🎉 ${member} достиг **${newLevel} уровня**!`
-      )
-      .catch(() => {});
+  if (newLevel > oldLevel) {
+    console.log(
+      `🎉 ${member.user.username} достиг ${newLevel} уровня!`
+    );
+
+    if (member.guild.systemChannel) {
+      member.guild.systemChannel
+        .send(
+          `🎉 ${member} достиг **${newLevel} уровня**!`
+        )
+        .catch(() => {});
+    }
   }
 }
 
 // =========================
 // XP за нахождение в войсе
-// =========================
-//
-// Каждые 60 секунд:
-// +1 XP
-//
-// Затико не обязан находиться в войсе.
 // =========================
 
 function updateVoiceXp() {
@@ -470,14 +419,15 @@ function updateVoiceXp() {
 
     const oldXp = user.xp;
 
-    // +1 XP за каждую минуту
     user.xp += newMinutes;
 
     user.lastVoiceXp = minutesPassed;
 
     changed = true;
 
-    // Ищем пользователя на сервере
+    const oldLevel = getLevel(oldXp);
+    const newLevel = getLevel(user.xp);
+
     for (const guild of client.guilds.cache.values()) {
       const member =
         guild.members.cache.get(userId);
@@ -493,9 +443,6 @@ function updateVoiceXp() {
       console.log(
         `⭐ Всего XP: ${user.xp}`
       );
-
-      const oldLevel = getLevel(oldXp);
-      const newLevel = getLevel(user.xp);
 
       if (
         newLevel > oldLevel &&
@@ -517,136 +464,108 @@ function updateVoiceXp() {
   }
 }
 
-// =========================
-// Запускаем проверку XP
-// =========================
-//
-// Проверяем каждую секунду.
-//
-// Сам XP всё равно выдаётся
-// только за полные минуты.
-// =========================
-
-setInterval(() => {
-  updateVoiceXp();
-}, 1000);
+// Проверяем войс каждую секунду
+setInterval(updateVoiceXp, 1000);
 
 // =========================
-// 5 случайных лаев
+// Клиент Discord
+// =========================
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMembers,
+  ],
+});
+
+// =========================
+// Гавканье в войсе
 // =========================
 
 async function barkInVoice(message) {
   const voiceChannel =
-    message.member.voice.channel;
+    message.member?.voice?.channel;
 
   if (!voiceChannel) {
-    return message.reply(
-      "❌ Сначала зайди в голосовой канал."
+    await message.reply(
+      "❌ Ты должен находиться в голосовом канале."
     );
+
+    return;
   }
 
-  let connection =
-    getVoiceConnection(
-      message.guild.id
-    );
-
-  if (!connection) {
-    connection = joinVoiceChannel({
+  try {
+    const connection = joinVoiceChannel({
       channelId: voiceChannel.id,
-
-      guildId: message.guild.id,
-
+      guildId: voiceChannel.guild.id,
       adapterCreator:
-        voiceChannel.guild
-          .voiceAdapterCreator,
-
-      selfDeaf: false,
-      selfMute: false,
+        voiceChannel.guild.voiceAdapterCreator,
     });
 
-    try {
-      await entersState(
-        connection,
-        VoiceConnectionStatus.Ready,
-        30_000
-      );
-    } catch (error) {
-      console.error(
-        "❌ Ошибка подключения к войсу:",
-        error
-      );
+    const player = createAudioPlayer();
 
-      connection.destroy();
+    const barkNumber =
+      Math.floor(Math.random() * 5) + 1;
 
-      return message.reply(
-        "❌ Не получилось подключиться к голосовому каналу."
-      );
-    }
-  }
-
-  const barkFiles = [
-    "bark1.mp3",
-    "bark2.mp3",
-    "bark3.mp3",
-    "bark4.mp3",
-    "bark5.mp3",
-  ];
-
-  const randomBark =
-    barkFiles[
-      Math.floor(
-        Math.random() * barkFiles.length
-      )
-    ];
-
-  const barkPath = path.join(
-    __dirname,
-    randomBark
-  );
-
-  if (!fs.existsSync(barkPath)) {
-    return message.reply(
-      `❌ Не найден файл \`${randomBark}\`.`
-    );
-  }
-
-  const player =
-    createAudioPlayer({
-      behaviors: {
-        noSubscriber:
-          NoSubscriberBehavior.Play,
-      },
-    });
-
-  const resource =
-    createAudioResource(
-      barkPath
+    const barkFile = path.join(
+      __dirname,
+      `bark${barkNumber}.mp3`
     );
 
-  connection.subscribe(player);
-
-  player.play(resource);
-
-  await message.reply(
-    `🐕 Хатико гавкнул: \`${randomBark}\``
-  );
-
-  player.on(
-    AudioPlayerStatus.Idle,
-    () => {
-      player.stop();
-    }
-  );
-
-  player.on(
-    "error",
-    (error) => {
-      console.error(
-        "❌ Ошибка воспроизведения:",
-        error
+    if (!fs.existsSync(barkFile)) {
+      await message.reply(
+        `❌ Файл ${`bark${barkNumber}.mp3`} не найден.`
       );
+
+      return;
     }
-  );
+
+    const resource =
+      createAudioResource(barkFile);
+
+    connection.subscribe(player);
+
+    player.play(resource);
+
+    console.log(
+      `🐕 Гав! ${message.author.username}`
+    );
+
+    player.on(
+      AudioPlayerStatus.Idle,
+      () => {
+        try {
+          connection.destroy();
+        } catch {}
+      }
+    );
+
+    player.on(
+      "error",
+      (error) => {
+        console.error(
+          "❌ Ошибка аудиоплеера:",
+          error.message
+        );
+
+        try {
+          connection.destroy();
+        } catch {}
+      }
+    );
+  } catch (error) {
+    console.error(
+      "❌ Ошибка подключения к войсу:",
+      error
+    );
+
+    await message.reply(
+      "❌ Не получилось подключиться к голосовому каналу."
+    );
+  }
 }
 
 // =========================
@@ -654,6 +573,8 @@ async function barkInVoice(message) {
 // =========================
 
 function restoreVoiceSessions() {
+  let changed = false;
+
   for (const guild of client.guilds.cache.values()) {
     for (const channel of guild.channels.cache.values()) {
       if (!channel.isVoiceBased()) {
@@ -665,115 +586,119 @@ function restoreVoiceSessions() {
           continue;
         }
 
-        const data =
-          getUser(member.id);
+        const user = getUser(member.id);
 
-        // Если бот перезапустился,
-        // а пользователь всё ещё в войсе
-        if (!data.joinedAt) {
-          data.joinedAt = Date.now();
+        if (!user.joinedAt) {
+          user.joinedAt = Date.now();
+          user.lastVoiceXp = 0;
 
-          // Новая сессия
-          data.lastVoiceXp = 0;
-
-          saveUsers();
+          changed = true;
 
           console.log(
-            `🔄 Восстановлена голосовая сессия: ${member.user.tag}`
+            `🎧 Восстановлен войс: ${member.user.username}`
           );
         }
       }
     }
   }
+
+  if (changed) {
+    saveUsers();
+  }
 }
 
 // =========================
-// Запуск Discord
+// Бот запущен
 // =========================
 
-client.once(
-  "clientReady",
-  () => {
+client.once("ready", () => {
+  console.log("");
+  console.log("================================");
+  console.log("🐕 Hachiko запущен!");
+  console.log(`🤖 ${client.user.tag}`);
+  console.log(`🌐 Серверов: ${client.guilds.cache.size}`);
+  console.log("================================");
+  console.log("");
+
+  restoreVoiceSessions();
+
+  client.user.setActivity(
+    "!help | Hachiko 🐕",
+    {
+      type: ActivityType.Watching,
+    }
+  );
+
+  // Если GitHub настроен
+  if (
+    GITHUB_TOKEN &&
+    GITHUB_OWNER &&
+    GITHUB_REPO
+  ) {
     console.log(
-      `🐕 Hachiko запущен: ${client.user.tag}`
+      `☁️ GitHub сохранение включено: ${GITHUB_OWNER}/${GITHUB_REPO}`
     );
-
-    // Проверяем, кто уже находится в войсе
-    restoreVoiceSessions();
-
-    client.user.setActivity(
-      "за голосовыми каналами",
-      {
-        type: ActivityType.Watching,
-      }
+  } else {
+    console.log(
+      "⚠️ GitHub сохранение НЕ настроено."
     );
   }
-);
+});
 
 // =========================
-// Команды + XP за сообщения
+// Сообщения
 // =========================
 
 client.on(
   "messageCreate",
   async (message) => {
-    // Не выдаём XP ботам
     if (message.author.bot) {
       return;
     }
 
-    const member =
-      message.member;
+    const user = getUser(message.author.id);
 
     // =========================
-    // XP за сообщения
+    // XP за сообщение
     // =========================
 
-    if (member) {
-      const user =
-        getUser(member.id);
+    const now = Date.now();
 
-      const now = Date.now();
+    if (
+      now - Number(user.lastMessageXp) >=
+      60 * 1000
+    ) {
+      user.lastMessageXp = now;
 
-      // 10 XP раз в минуту
-      if (
-        now -
-          user.lastMessageXp >=
-        60_000
-      ) {
-        user.lastMessageXp = now;
-
-        addXp(member, 10);
-      }
+      addXp(message.member, 10);
     }
 
     // =========================
     // Команда
     // =========================
 
-    const content =
-      message.content.trim();
-
-    if (!content) {
+    if (!message.content.startsWith("!")) {
       return;
     }
 
     const args =
-      content.split(/\s+/);
+      message.content
+        .trim()
+        .split(/\s+/);
 
     const command =
-      args
-        .shift()
-        .toLowerCase();
+      args[0].toLowerCase();
 
     // =========================
     // !ping
     // =========================
 
     if (command === "!ping") {
-      return message.reply(
-        `🏓 Pong! Задержка: ${client.ws.ping} мс`
+      await message.reply(
+        `🏓 Pong! ${client.ws.ping}ms`
       );
+
+      return;
     }
 
     // =========================
@@ -781,9 +706,9 @@ client.on(
     // =========================
 
     if (command === "!woof") {
-      return message.reply(
-        "🐕 Гав-гав!"
-      );
+      await message.reply("🐕 Гав-гав!");
+
+      return;
     }
 
     // =========================
@@ -794,7 +719,9 @@ client.on(
       command === "!gaf" ||
       command === "!гав"
     ) {
-      return barkInVoice(message);
+      await barkInVoice(message);
+
+      return;
     }
 
     // =========================
@@ -802,23 +729,26 @@ client.on(
     // =========================
 
     if (command === "!help") {
-      return message.reply(
+      await message.reply(
         [
-          "**🐕 Команды Hachiko:**",
+          "🐕 **Команды Hachiko:**",
           "",
           "`!ping` — проверить задержку",
           "`!woof` — гавкнуть в чате",
           "`!gaf` — случайный лай в войсе",
+          "`!гав` — случайный лай в войсе",
           "`!rank` — твой уровень и XP",
           "`!voicetime` — время в войсе",
           "`!topvoice` — топ по времени в войсе",
           "`!uptime` — время работы бота",
           "`!server` — информация о сервере",
-          "`!where` — где ты находишься",
-          "`!stay` — зайти в твой голосовой канал",
-          "`!leave` — выйти из голосового канала",
+          "`!where` — где находится бот",
+          "`!stay` — бот остаётся в войсе",
+          "`!leave` — бот выходит из войса",
         ].join("\n")
       );
+
+      return;
     }
 
     // =========================
@@ -826,113 +756,98 @@ client.on(
     // =========================
 
     if (command === "!rank") {
-      const user =
-        getUser(
-          message.author.id
-        );
-
-      const level =
-        getLevel(user.xp);
+      const level = getLevel(user.xp);
 
       const nextLevelXp =
         getRequiredXp(level);
 
-      const voiceTime =
-        getVoiceTime(user);
+      const currentLevelXp =
+        getRequiredXp(level - 1);
 
-      return message.reply(
+      const xpInLevel =
+        user.xp - currentLevelXp;
+
+      const xpNeeded =
+        nextLevelXp - currentLevelXp;
+
+      await message.reply(
         [
-          `📊 **Статистика ${message.author.username}**`,
+          `🐕 **${message.author.username}**`,
           "",
           `⭐ Уровень: **${level}**`,
-          `✨ XP: **${user.xp}/${nextLevelXp}**`,
-          `🎧 Время в войсе: **${formatTime(
-            voiceTime
-          )}**`,
+          `✨ XP: **${user.xp}**`,
+          `📈 До следующего уровня: **${Math.max(
+            0,
+            nextLevelXp - user.xp
+          )} XP**`,
+          `📊 Прогресс: **${xpInLevel}/${xpNeeded}**`,
         ].join("\n")
       );
+
+      return;
     }
 
     // =========================
     // !voicetime
     // =========================
 
-    if (
-      command === "!voicetime"
-    ) {
-      const target =
-        message.mentions.members.first() ||
-        message.member;
-
-      const user =
-        getUser(target.id);
-
-      const voiceTime =
+    if (command === "!voicetime") {
+      const seconds =
         getVoiceTime(user);
 
-      return message.reply(
-        `🎧 ${target.user.username} провёл в войсе **${formatTime(
-          voiceTime
+      await message.reply(
+        `🎧 Ты провёл в войсе: **${formatTime(
+          seconds
         )}**`
       );
+
+      return;
     }
 
     // =========================
     // !topvoice
     // =========================
 
-    if (
-      command === "!topvoice"
-    ) {
-      const sorted =
-        [...users.entries()]
-          .map(
-            ([userId, data]) => ({
-              userId,
+    if (command === "!topvoice") {
+      const top = [...users.entries()]
+        .map(([id, data]) => ({
+          id,
+          seconds:
+            getVoiceTime(data),
+        }))
+        .sort(
+          (a, b) =>
+            b.seconds - a.seconds
+        )
+        .slice(0, 10);
 
-              seconds:
-                getVoiceTime(data),
-            })
-          )
-          .sort(
-            (a, b) =>
-              b.seconds -
-              a.seconds
-          )
-          .slice(0, 10);
-
-      if (
-        sorted.length === 0
-      ) {
-        return message.reply(
-          "Пока никто не накопил время в войсе."
+      if (top.length === 0) {
+        await message.reply(
+          "📊 Пока никто не проводил время в войсе."
         );
+
+        return;
       }
 
       const lines = [];
 
-      for (
-        let i = 0;
-        i < sorted.length;
-        i++
-      ) {
-        const item =
-          sorted[i];
+      for (let i = 0; i < top.length; i++) {
+        const item = top[i];
 
-        let name =
-          `Пользователь ${item.userId}`;
+        let member = null;
 
-        try {
-          const member =
-            await message.guild.members.fetch(
-              item.userId
-            );
+        for (const guild of client.guilds.cache.values()) {
+          member =
+            guild.members.cache.get(item.id);
 
-          name =
-            member.user.username;
-        } catch {
-          // Пользователь мог покинуть сервер
+          if (member) {
+            break;
+          }
         }
+
+        const name =
+          member?.user?.username ||
+          `User ${item.id}`;
 
         lines.push(
           `**${i + 1}.** ${name} — ${formatTime(
@@ -941,306 +856,328 @@ client.on(
         );
       }
 
-      return message.reply(
-        `🏆 **Топ по времени в войсе:**\n${lines.join(
+      await message.reply(
+        `🏆 **Топ по времени в войсе:**\n\n${lines.join(
           "\n"
         )}`
       );
+
+      return;
     }
 
     // =========================
     // !uptime
     // =========================
 
-    if (
-      command === "!uptime"
-    ) {
-      return message.reply(
+    if (command === "!uptime") {
+      await message.reply(
         `⏱️ Бот работает: **${formatTime(
-          Math.floor(
-            process.uptime()
-          )
+          process.uptime()
         )}**`
       );
+
+      return;
     }
 
     // =========================
     // !server
     // =========================
 
-    if (
-      command === "!server"
-    ) {
-      return message.reply(
+    if (command === "!server") {
+      const guild = message.guild;
+
+      if (!guild) {
+        return;
+      }
+
+      await message.reply(
         [
-          `🏠 Сервер: **${message.guild.name}**`,
-          `👥 Участников: **${message.guild.memberCount}**`,
-          `🆔 ID: \`${message.guild.id}\``,
+          `🏠 **${guild.name}**`,
+          "",
+          `👥 Участников: **${guild.memberCount}**`,
+          `💬 Каналов: **${guild.channels.cache.size}**`,
+          `👑 Владелец: <@${guild.ownerId}>`,
         ].join("\n")
       );
+
+      return;
     }
 
     // =========================
     // !where
     // =========================
 
-    if (
-      command === "!where"
-    ) {
-      const voiceChannel =
-        message.member.voice.channel;
+    if (command === "!where") {
+      const guilds =
+        client.guilds.cache;
 
-      if (!voiceChannel) {
-        return message.reply(
-          "❌ Ты сейчас не находишься в войсе."
+      if (guilds.size === 0) {
+        await message.reply(
+          "❌ Бот сейчас не находится ни на одном сервере."
         );
+
+        return;
       }
 
-      return message.reply(
-        `🎧 Ты находишься в канале **${voiceChannel.name}**`
+      const names =
+        guilds.map(
+          (guild) =>
+            `• **${guild.name}**`
+        );
+
+      await message.reply(
+        `🌍 Я нахожусь на серверах:\n\n${names.join(
+          "\n"
+        )}`
       );
+
+      return;
     }
 
     // =========================
     // !stay
     // =========================
 
-    if (
-      command === "!stay"
-    ) {
+    if (command === "!stay") {
       const voiceChannel =
-        message.member.voice.channel;
+        message.member?.voice?.channel;
 
       if (!voiceChannel) {
-        return message.reply(
+        await message.reply(
           "❌ Сначала зайди в голосовой канал."
         );
+
+        return;
       }
-
-      const oldConnection =
-        getVoiceConnection(
-          message.guild.id
-        );
-
-      if (oldConnection) {
-        oldConnection.destroy();
-      }
-
-      const connection =
-        joinVoiceChannel({
-          channelId:
-            voiceChannel.id,
-
-          guildId:
-            message.guild.id,
-
-          adapterCreator:
-            voiceChannel.guild
-              .voiceAdapterCreator,
-
-          selfDeaf: false,
-          selfMute: false,
-        });
 
       try {
-        await entersState(
-          connection,
-          VoiceConnectionStatus.Ready,
-          30_000
-        );
+        joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: voiceChannel.guild.id,
+          adapterCreator:
+            voiceChannel.guild.voiceAdapterCreator,
+        });
 
-        return message.reply(
-          `🐕 Я зашёл в канал **${voiceChannel.name}**`
+        await message.reply(
+          `🐕 Остаюсь в **${voiceChannel.name}**.`
         );
       } catch (error) {
-        console.error(
-          "❌ Ошибка подключения:",
-          error
-        );
+        console.error(error);
 
-        connection.destroy();
-
-        return message.reply(
-          "❌ Не удалось подключиться к голосовому каналу."
+        await message.reply(
+          "❌ Не получилось зайти в войс."
         );
       }
+
+      return;
     }
 
     // =========================
     // !leave
     // =========================
 
-    if (
-      command === "!leave"
-    ) {
+    if (command === "!leave") {
+      const guild = message.guild;
+
+      if (!guild) {
+        return;
+      }
+
       const connection =
-        getVoiceConnection(
-          message.guild.id
+        guild.voiceStates.cache.find(
+          (state) =>
+            state.member?.user?.id ===
+            client.user.id
         );
 
       if (!connection) {
-        return message.reply(
-          "❌ Я сейчас не нахожусь в войсе."
+        await message.reply(
+          "🐕 Я сейчас не нахожусь в войсе."
+        );
+
+        return;
+      }
+
+      try {
+        const voiceConnection =
+          connection.channel;
+
+        if (voiceConnection) {
+          await message.reply(
+            `🐕 Выхожу из **${voiceConnection.name}**.`
+          );
+        }
+
+        // Ищем активное соединение
+        const guildAdapter =
+          guild.voiceStates.cache;
+
+        for (
+          const state of guildAdapter.values()
+        ) {
+          if (
+            state.member?.user?.id ===
+            client.user.id
+          ) {
+            try {
+              state.disconnect();
+            } catch {}
+          }
+        }
+      } catch (error) {
+        console.error(error);
+
+        await message.reply(
+          "❌ Не получилось выйти из войса."
         );
       }
 
-      connection.destroy();
-
-      return message.reply(
-        "👋 Я вышел из голосового канала."
-      );
+      return;
     }
   }
 );
 
 // =========================
-// Отслеживание голосовых каналов
-// =========================
-//
-// Бот НЕ должен находиться в войсе.
-// Discord сообщает ему:
-// кто вошёл,
-// кто вышел,
-// кто перешёл в другой канал.
+// Отслеживание войса
 // =========================
 
 client.on(
   "voiceStateUpdate",
   (oldState, newState) => {
     const member =
-      newState.member ||
-      oldState.member;
+      newState.member || oldState.member;
 
-    if (
-      !member ||
-      member.user.bot
-    ) {
+    if (!member || member.user.bot) {
       return;
     }
 
     const user =
       getUser(member.id);
 
-    const wasInVoice =
-      Boolean(oldState.channelId);
-
-    const isNowInVoice =
-      Boolean(newState.channelId);
-
     // =========================
-    // Пользователь вошёл в войс
+    // Зашёл в войс
     // =========================
 
     if (
-      !wasInVoice &&
-      isNowInVoice
+      !oldState.channelId &&
+      newState.channelId
     ) {
-      user.joinedAt =
-        Date.now();
+      user.joinedAt = Date.now();
 
-      // Начинаем новую сессию
       user.lastVoiceXp = 0;
 
       saveUsers();
 
       console.log(
-        `🎧 ${member.user.username} зашёл в войс`
+        `🎧 ${member.user.username} зашёл в войс.`
       );
 
       return;
     }
 
     // =========================
-    // Пользователь вышел из войса
+    // Вышел из войса
     // =========================
 
     if (
-      wasInVoice &&
-      !isNowInVoice
+      oldState.channelId &&
+      !newState.channelId
     ) {
       if (user.joinedAt) {
-        const seconds =
+        const sessionSeconds =
           Math.floor(
             (Date.now() -
-              Number(
-                user.joinedAt
-              )) /
+              Number(user.joinedAt)) /
               1000
           );
 
-        const safeSeconds =
-          Math.max(
-            0,
-            seconds
-          );
-
-        // Сохраняем общее время
         user.voiceSeconds +=
-          safeSeconds;
-
-        console.log(
-          `👋 ${member.user.username} вышел из войса`
-        );
-
-        console.log(
-          `🎧 Добавлено времени: ${safeSeconds} сек.`
-        );
-
-        console.log(
-          `✨ XP за войс уже начислялся автоматически`
-        );
-
-        // Закрываем сессию
-        user.joinedAt =
-          null;
-
-        user.lastVoiceXp =
-          0;
-
-        saveUsers();
+          sessionSeconds;
       }
+
+      user.joinedAt = null;
+
+      user.lastVoiceXp = 0;
+
+      saveUsers();
+
+      console.log(
+        `🎧 ${member.user.username} вышел из войса.`
+      );
 
       return;
     }
 
     // =========================
-    // Переход между каналами
+    // Перешёл между каналами
     // =========================
 
     if (
-      wasInVoice &&
-      isNowInVoice &&
+      oldState.channelId &&
+      newState.channelId &&
       oldState.channelId !==
         newState.channelId
     ) {
       console.log(
-        `🔄 ${member.user.username} перешёл в другой голосовой канал`
+        `🔄 ${member.user.username} перешёл в другой войс.`
       );
-
-      // Время НЕ сбрасываем.
-      //
-      // Пользователь продолжает
-      // одну и ту же голосовую сессию.
-
-      saveUsers();
-
-      return;
     }
   }
 );
 
 // =========================
-// Авторизация
+// Graceful shutdown
+// =========================
+
+async function shutdown(signal) {
+  console.log(
+    `🛑 Получен сигнал ${signal}. Сохраняем данные...`
+  );
+
+  saveUsers();
+
+  // Даём GitHub немного времени сохранить файл
+  if (
+    GITHUB_TOKEN &&
+    GITHUB_OWNER &&
+    GITHUB_REPO
+  ) {
+    try {
+      await saveUsersToGitHub();
+    } catch {}
+  }
+
+  try {
+    client.destroy();
+  } catch {}
+
+  try {
+    server.close();
+  } catch {}
+
+  process.exit(0);
+}
+
+process.on(
+  "SIGTERM",
+  () => shutdown("SIGTERM")
+);
+
+process.on(
+  "SIGINT",
+  () => shutdown("SIGINT")
+);
+
+// =========================
+// Запуск
 // =========================
 
 if (!process.env.TOKEN) {
   console.error(
-    "❌ TOKEN не найден."
+    "❌ TOKEN не найден в переменных окружения."
   );
 
   process.exit(1);
 }
 
-client.login(
-  process.env.TOKEN
-);
+client.login(process.env.TOKEN);
