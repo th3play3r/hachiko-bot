@@ -45,6 +45,15 @@ http
 
 const DATA_FILE = path.join(__dirname, "users.json");
 
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_OWNER = process.env.GITHUB_OWNER;
+const GITHUB_REPO = process.env.GITHUB_REPO;
+const GITHUB_BRANCH = process.env.GITHUB_BRANCH || "main";
+
+let githubSaveTimer = null;
+let githubSaveInProgress = false;
+let githubSaveAgain = false;
+
 function loadUsers() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
@@ -52,13 +61,33 @@ function loadUsers() {
       return new Map();
     }
 
-    const data = JSON.parse(
-      fs.readFileSync(DATA_FILE, "utf8")
-    );
+    const file = fs.readFileSync(DATA_FILE, "utf8").trim();
+
+    // Пустой файл считаем пустой базой
+    if (!file) {
+      console.log("⚠️ users.json пустой. Создаём новую базу.");
+      fs.writeFileSync(DATA_FILE, "{}", "utf8");
+      return new Map();
+    }
+
+    const data = JSON.parse(file);
 
     return new Map(Object.entries(data));
   } catch (error) {
-    console.error("❌ Ошибка загрузки users.json:", error);
+    console.error(
+      "❌ Ошибка загрузки users.json:",
+      error
+    );
+
+    // Если JSON повреждён, не даём боту упасть
+    try {
+      fs.writeFileSync(
+        DATA_FILE,
+        "{}",
+        "utf8"
+      );
+    } catch {}
+
     return new Map();
   }
 }
@@ -72,8 +101,170 @@ function saveUsers() {
       JSON.stringify(data, null, 2),
       "utf8"
     );
+
+    console.log("💾 users.json сохранён локально.");
+
+    // Не делаем GitHub commit каждую секунду.
+    // Ждём 5 секунд после последнего изменения.
+    scheduleGitHubSave();
+
   } catch (error) {
-    console.error("❌ Ошибка сохранения users.json:", error);
+    console.error(
+      "❌ Ошибка локального сохранения users.json:",
+      error
+    );
+  }
+}
+
+function scheduleGitHubSave() {
+  if (
+    !GITHUB_TOKEN ||
+    !GITHUB_OWNER ||
+    !GITHUB_REPO
+  ) {
+    console.log(
+      "⚠️ GitHub сохранение отключено: нет GITHUB_TOKEN / GITHUB_OWNER / GITHUB_REPO"
+    );
+
+    return;
+  }
+
+  if (githubSaveTimer) {
+    clearTimeout(githubSaveTimer);
+  }
+
+  githubSaveTimer = setTimeout(() => {
+    saveUsersToGitHub();
+  }, 5000);
+}
+
+async function saveUsersToGitHub() {
+  if (githubSaveInProgress) {
+    githubSaveAgain = true;
+    return;
+  }
+
+  githubSaveInProgress = true;
+
+  try {
+    const filePath = "users.json";
+
+    const rawData = fs.readFileSync(
+      DATA_FILE,
+      "utf8"
+    );
+
+    const encodedContent =
+      Buffer.from(rawData).toString("base64");
+
+    const apiUrl =
+      `https://api.github.com/repos/` +
+      `${GITHUB_OWNER}/` +
+      `${GITHUB_REPO}/contents/` +
+      `${filePath}`;
+
+    // Сначала узнаём SHA текущего файла
+    const getResponse = await fetch(
+      `${apiUrl}?ref=${encodeURIComponent(GITHUB_BRANCH)}`,
+      {
+        method: "GET",
+
+        headers: {
+          Authorization:
+            `Bearer ${GITHUB_TOKEN}`,
+
+          Accept:
+            "application/vnd.github+json",
+
+          "X-GitHub-Api-Version":
+            "2022-11-28",
+
+          "User-Agent":
+            "Hachiko-Bot",
+        },
+      }
+    );
+
+    let sha = null;
+
+    if (getResponse.ok) {
+      const fileInfo =
+        await getResponse.json();
+
+      sha = fileInfo.sha;
+    } else if (getResponse.status !== 404) {
+      const errorText =
+        await getResponse.text();
+
+      throw new Error(
+        `GitHub GET ${getResponse.status}: ${errorText}`
+      );
+    }
+
+    // Загружаем новый users.json
+    const putResponse = await fetch(
+      apiUrl,
+      {
+        method: "PUT",
+
+        headers: {
+          Authorization:
+            `Bearer ${GITHUB_TOKEN}`,
+
+          Accept:
+            "application/vnd.github+json",
+
+          "Content-Type":
+            "application/json",
+
+          "X-GitHub-Api-Version":
+            "2022-11-28",
+
+          "User-Agent":
+            "Hachiko-Bot",
+        },
+
+        body: JSON.stringify({
+          message:
+            "Update users.json",
+
+          content:
+            encodedContent,
+
+          branch:
+            GITHUB_BRANCH,
+
+          ...(sha ? { sha } : {}),
+        }),
+      }
+    );
+
+    if (!putResponse.ok) {
+      const errorText =
+        await putResponse.text();
+
+      throw new Error(
+        `GitHub PUT ${putResponse.status}: ${errorText}`
+      );
+    }
+
+    console.log(
+      "☁️ users.json успешно сохранён в GitHub!"
+    );
+
+  } catch (error) {
+    console.error(
+      "❌ Ошибка сохранения users.json в GitHub:",
+      error.message
+    );
+
+  } finally {
+    githubSaveInProgress = false;
+
+    if (githubSaveAgain) {
+      githubSaveAgain = false;
+      scheduleGitHubSave();
+    }
   }
 }
 
