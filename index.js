@@ -510,7 +510,7 @@ client.on("messageCreate", async (message) => {
 // Отслеживание времени в войсе
 // =========================
 
-client.on("voiceStateUpdate", async (oldState, newState) => {
+client.on("voiceStateUpdate", (oldState, newState) => {
   const member = newState.member || oldState.member;
 
   if (!member || member.user.bot) return;
@@ -537,26 +537,24 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   if (wasInVoice && !isNowInVoice) {
     if (user.joinedAt) {
       const seconds = Math.floor(
-        (Date.now() - user.joinedAt) / 1000
+        (Date.now() - Number(user.joinedAt)) / 1000
       );
 
-      user.voiceSeconds += seconds;
-      user.xp += Math.floor(seconds / 60);
+      user.voiceSeconds += Math.max(0, seconds);
+      user.xp += Math.floor(Math.max(0, seconds) / 60);
       user.joinedAt = null;
 
       saveUsers();
 
       console.log(
-        `👋 ${member.user.username} вышел из войса. Добавлено: ${formatTime(
-          seconds
-        )}`
+        `👋 ${member.user.username} вышел из войса. Добавлено ${seconds} секунд`
       );
     }
 
     return;
   }
 
-  // Переход между голосовыми каналами
+  // Переход между каналами
   if (
     wasInVoice &&
     isNowInVoice &&
@@ -564,11 +562,11 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   ) {
     if (user.joinedAt) {
       const seconds = Math.floor(
-        (Date.now() - user.joinedAt) / 1000
+        (Date.now() - Number(user.joinedAt)) / 1000
       );
 
-      user.voiceSeconds += seconds;
-      user.xp += Math.floor(seconds / 60);
+      user.voiceSeconds += Math.max(0, seconds);
+      user.xp += Math.floor(Math.max(0, seconds) / 60);
     }
 
     user.joinedAt = Date.now();
@@ -581,40 +579,79 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   }
 });
 
+
 // =========================
-// Начисление времени каждую минуту
+// Отслеживание времени в войсе
 // =========================
 
-setInterval(() => {
-  let changed = false;
+client.on("voiceStateUpdate", (oldState, newState) => {
+  const member = newState.member || oldState.member;
 
-  for (const [, data] of users.entries()) {
-    if (!data.joinedAt) continue;
+  if (!member || member.user.bot) return;
 
-    const seconds = Math.floor(
-      (Date.now() - data.joinedAt) / 1000
+  const user = getUser(member.id);
+
+  const wasInVoice = Boolean(oldState.channelId);
+  const isNowInVoice = Boolean(newState.channelId);
+
+  // Вход в войс
+  if (!wasInVoice && isNowInVoice) {
+    user.joinedAt = Date.now();
+
+    saveUsers();
+
+    console.log(
+      `🎧 ${member.user.username} зашёл в войс`
     );
 
-    if (seconds >= 60) {
-      data.voiceSeconds += seconds;
-      data.xp += Math.floor(seconds / 60);
-      data.joinedAt = Date.now();
+    return;
+  }
 
-      changed = true;
+  // Выход из войса
+  if (wasInVoice && !isNowInVoice) {
+    if (user.joinedAt) {
+      const seconds = Math.floor(
+        (Date.now() - Number(user.joinedAt)) / 1000
+      );
+
+      user.voiceSeconds += Math.max(0, seconds);
+      user.xp += Math.floor(Math.max(0, seconds) / 60);
+      user.joinedAt = null;
+
+      saveUsers();
+
+      console.log(
+        `👋 ${member.user.username} вышел из войса. Добавлено ${seconds} секунд`
+      );
     }
+
+    return;
   }
 
-  if (changed) {
+  // Переход между каналами
+  if (
+    wasInVoice &&
+    isNowInVoice &&
+    oldState.channelId !== newState.channelId
+  ) {
+    if (user.joinedAt) {
+      const seconds = Math.floor(
+        (Date.now() - Number(user.joinedAt)) / 1000
+      );
+
+      user.voiceSeconds += Math.max(0, seconds);
+      user.xp += Math.floor(Math.max(0, seconds) / 60);
+    }
+
+    user.joinedAt = Date.now();
+
     saveUsers();
-    console.log("💾 Время в войсе сохранено.");
-  }
-}, 60_000);
 
-// Автосохранение
-setInterval(() => {
-  saveUsers();
-  console.log("💾 Данные сохранены.");
-}, 5 * 60_000);
+    console.log(
+      `🔄 ${member.user.username} перешёл в другой войс`
+    );
+  }
+});
 
 // =========================
 // Авторизация
