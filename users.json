@@ -1,23 +1,23 @@
 {
   "898943258342871060": {
-    "xp": 11,
+    "xp": 12,
     "voiceSeconds": 0,
     "joinedAt": 1788981930372,
     "lastMessageXp": 0,
-    "lastVoiceXp": 11
+    "lastVoiceXp": 12
   },
   "947535164454617151": {
-    "xp": 11,
+    "xp": 12,
     "voiceSeconds": 0,
     "joinedAt": 1788981930373,
     "lastMessageXp": 0,
-    "lastVoiceXp": 11
+    "lastVoiceXp": 12
   },
   "950878231249158145": {
-    "xp": 11,
+    "xp": 22,
     "voiceSeconds": 0,
     "joinedAt": 1788981930373,
-    "lastMessageXp": 0,
-    "lastVoiceXp": 11
+    "lastMessageXp": 1788982652565,
+    "lastVoiceXp": 12
   }
 }
